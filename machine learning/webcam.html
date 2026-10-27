@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Proctoring Demo — Phone + Person + Pose</title>
+<style>
+  body { margin: 0; background: #111; color: #eee; font: 14px system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  h1 { font-size: 18px; font-weight: 600; margin: 14px 0 4px; }
+  #status { color: #9aa; margin-bottom: 10px; min-height: 18px; }
+  #layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
+            justify-content: center; width: 100%; max-width: 1300px; }
+  #stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; max-width: 96vw; }
+  canvas { display: block; }
+  #overlay { position: absolute; inset: 0; }
+  #panel { width: 300px; max-width: 96vw; background: #181818; border-radius: 8px;
+           padding: 12px; box-sizing: border-box; }
+  #calib { margin-bottom: 10px; }
+  #calib-label { font-weight: 600; margin-bottom: 6px; }
+  #bar-outer { height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden; }
+  #bar { height: 100%; width: 0%; background: #f5a623; transition: width 0.3s linear; }
+  #eventlist { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .ev { background: #222; border-left: 4px solid #666; border-radius: 4px;
+        padding: 6px 8px; font-size: 13px; }
+  .ev-time { color: #9aa; margin-right: 6px; }
+  .ev-severity { float: right; font-size: 11px; text-transform: uppercase;
+                 padding: 1px 6px; border-radius: 8px; color: #000; }
+  .sev-low      { border-left-color: #66bb6a; } .sev-low .ev-severity      { background: #66bb6a; }
+  .sev-medium   { border-left-color: #f5a623; } .sev-medium .ev-severity   { background: #f5a623; }
+  .sev-high     { border-left-color: #ff7043; } .sev-high .ev-severity     { background: #ff7043; }
+  .sev-critical { border-left-color: #ff1744; } .sev-critical .ev-severity { background: #ff1744; }
+  .ev-none { color: #777; }
+</style>
+</head>
+<body>
+<h1>Live Proctoring Demo</h1>
+<div id="status">starting…</div>
+<div id="layout">
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="panel">
+    <div id="calib">
+      <div id="calib-label">Calibrating… 10.0s — sit still, face the camera</div>
+      <div id="bar-outer"><div id="bar"></div></div>
+    </div>
+    <div id="eventlist"><div class="ev-none">no events yet</div></div>
+  </div>
+</div>
+<script>
+const view = document.getElementById('view');
+const overlay = document.getElementById('overlay');
+const statusEl = document.getElementById('status');
+const stage = document.getElementById('stage');
+const calibLabel = document.getElementById('calib-label');
+const bar = document.getElementById('bar');
+const eventList = document.getElementById('eventlist');
+const FPS_TARGET = 15;
+const BASELINE_S = 10;
+
+let ctx, octx, ws, awaiting = false, video;
+let lastSend = 0, fps = 0, frames = 0, lastFpsT = performance.now();
+
+async function start() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  video = document.createElement('video');
+  video.srcObject = stream;
+  video.autoplay = true;
+  video.playsInline = true;
+  await video.play();
+
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const scale = Math.min(1, 960 / vw);
+  view.width = Math.round(vw * scale);
+  view.height = Math.round(vh * scale);
+  overlay.width = view.width;
+  overlay.height = view.height;
+  stage.style.width = view.width + 'px';
+  stage.style.aspectRatio = view.width + ' / ' + view.height;
+  ctx = view.getContext('2d');
+  octx = overlay.getContext('2d');
+
+  connect();
+  requestAnimationFrame(loop);
+}
+
+function loop(t) {
+  requestAnimationFrame(loop);
+  // wait for the previous frame's results before redrawing the video —
+  // otherwise the overlay (computed on an older frame) detaches from the
+  // head whenever you move
+  if (awaiting || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (t - lastSend < 1000 / FPS_TARGET) return;
+  lastSend = t;
+  // selfie mirror: draw the video flipped horizontally so left/right feels natural
+  ctx.save();
+  ctx.translate(view.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, view.width, view.height);
+  ctx.restore();
+  awaiting = true;
+  view.toBlob(async (blob) => {
+    try { ws.send(await blob.arrayBuffer()); } catch { awaiting = false; }
+  }, 'image/jpeg', 0.7);
+
+  frames++;
+  if (t - lastFpsT >= 1000) { fps = frames; frames = 0; lastFpsT = t; }
+}
+
+function drawBoxes(boxes, ms) {
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  octx.lineWidth = 3;
+  octx.strokeStyle = '#00e676';
+  octx.font = '16px system-ui, sans-serif';
+  for (const b of boxes) {
+    octx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+    const label = `${b.label} ${Math.round(b.conf * 100)}%`;
+    const w = octx.measureText(label).width + 10;
+    octx.fillStyle = '#00e676';
+    octx.fillRect(b.x1, b.y1 - 24, w, 24);
+    octx.fillStyle = '#000';
+    octx.fillText(label, b.x1 + 5, b.y1 - 7);
+  }
+  const n = boxes.length;
+  statusEl.textContent = `${fps} fps · ${ms.toFixed(1)} ms inference · ` +
+    (n ? `${n} detection${n > 1 ? 's' : ''}` : 'nothing in frame');
+}
+
+function drawGaze(g) {
+  if (!g) return;
+  // mirrored view: base point and horizontal direction are flipped so the
+  // line points where YOU feel you are looking (labels unchanged — they
+  // already describe your own left/right)
+  const bx = overlay.width - g.x * overlay.width, by = g.y * overlay.height;
+  const ex = bx - g.dx * overlay.width * 0.25;
+  const ey = by + g.dy * overlay.height * 0.32;
+
+  // eye-base marker (midpoint between the eyes)
+  octx.beginPath();
+  octx.arc(bx, by, 5, 0, Math.PI * 2);
+  octx.fillStyle = 'rgba(0,229,255,0.9)';
+  octx.fill();
+
+  // gaze ray
+  octx.beginPath();
+  octx.moveTo(bx, by);
+  octx.lineTo(ex, ey);
+  octx.strokeStyle = 'rgba(255,234,0,0.85)';
+  octx.lineWidth = 2;
+  octx.stroke();
+
+  // endpoint dot
+  octx.beginPath();
+  octx.arc(ex, ey, 6, 0, Math.PI * 2);
+  octx.fillStyle = '#ffea00';
+  octx.fill();
+
+  // direction label
+  const h = g.dx > 0.15 ? 'left' : g.dx < -0.15 ? 'right' : '';
+  const v = g.dy > 0.15 ? 'down' : g.dy < -0.15 ? 'up' : '';
+  octx.font = '13px system-ui, sans-serif';
+  octx.fillStyle = '#ffea00';
+  octx.fillText([h, v].filter(Boolean).join('-') || 'center', ex + 10, ey - 10);
+}
+
+function updateCalib(state, remaining) {
+  if (state === 'live') {
+    calibLabel.textContent = '● Live — deviations are being monitored';
+    bar.style.width = '100%';
+    bar.style.background = '#00e676';
+  } else {
+    calibLabel.textContent = `Calibrating… ${remaining.toFixed(1)}s — sit still, face the camera`;
+    bar.style.width = `${100 * (1 - remaining / BASELINE_S)}%`;
+  }
+}
+
+function fmtTime(s) {
+  const m = Math.floor(s / 60), sec = (s % 60).toFixed(0).padStart(2, '0');
+  return `${m}:${sec}`;
+}
+
+function addEvents(events) {
+  if (!events.length) return;
+  const none = eventList.querySelector('.ev-none');
+  if (none) none.remove();
+  for (const ev of events) {
+    const div = document.createElement('div');
+    div.className = `ev sev-${ev.severity}`;
+    div.innerHTML = `<span class="ev-time">${fmtTime(ev.start_s)}</span>` +
+      `${ev.event_type.replaceAll('_', ' ')}<span class="ev-severity">${ev.severity}</span>`;
+    eventList.appendChild(div);
+  }
+  eventList.scrollTop = eventList.scrollHeight;
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    drawBoxes(data.boxes, data.ms);
+    drawGaze(data.gaze);
+    updateCalib(data.state, data.seconds_remaining);
+    addEvents(data.events);
+    awaiting = false;  // results for the shown frame are in; allow next redraw
+  };
+  ws.onclose = () => {
+    statusEl.textContent = 'disconnected — retrying…';
+    setTimeout(connect, 1000);
+  };
+}
+
+start().catch(err => {
+  statusEl.textContent = 'camera error: ' + err.message;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "weights": "yolo11n.pt",
+  "data": "data/dataset.yaml",
+  "imgsz": 960,
+  "batch": 8,
+  "epochs": 150,
+  "patience": 30,
+  "device": 0,
+  "workers": 0,
+  "seed": 42,
+  "name": null
+}

@@ -1,0 +1,36 @@
+# ProctoringPolicy seed — severity map and detector thresholds.
+#
+# `event_catalog` is the plan's severity mapping (PROJECT_PLAN.md §3, Event
+# catalog). `pose` holds the head-pose/gaze thresholds consumed by the pose
+# pipeline and the live demo. TUNED 2026-10-07 on validation person P04
+# (iris gaze channel, independent per-channel detection): recall 1.00,
+# FA/hr 100 on the val GT. Single test run on P05/P06 pending.
+
+policy_version: pose_v2
+
+event_catalog:
+  gaze_deviation: medium
+  head_pose_deviation: medium
+  second_voice: high
+  unauthorized_object: high
+  second_person: critical
+  focus_loss: medium
+  copy_paste: low
+  connectivity_interruption: low
+
+pose:
+  baseline_s: 10.0
+  head_thr_deg: 12.0
+  gaze_thr: 0.7
+  min_dur_s: 1.0
+  merge_gap_s: 0.5
+  gaze_col: gaze_iris
+  # smooth_s evaluated 2026-10-10 (0.15-0.4): trims FA/hr ~15-35% but costs a
+  # test match at every setting — disabled because recall is the project priority.
+  smooth_s: 0.0
+
+yolo:
+  # per-class confidence floors for the live demo (separate from the event
+  # debounce thresholds in `pose`). 0.35 = the historical CONF default.
+  conf_phone: 0.35
+  conf_person: 0.35

@@ -1,0 +1,14 @@
+{
+  "weights": "runs/detect/train-7/weights/best.pt",
+  "data": "data/dataset.yaml",
+  "imgsz": 960,
+  "batch": 8,
+  "epochs": 50,
+  "patience": 30,
+  "device": 0,
+  "workers": 0,
+  "seed": 42,
+  "name": null,
+  "lr0": 0.001,
+  "freeze": 10
+}
