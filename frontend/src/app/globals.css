@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Design tokens — AIsmering: modern academic technology, responsible AI monitoring */
+@theme {
+  --color-navy-950: #0a1222;
+  --color-navy-900: #0f1b31;
+  --color-navy-800: #16243f;
+  --color-navy-700: #1e3054;
+  --color-navy-100: #dbe4f3;
+
+  --color-brand-50: #eef5ff;
+  --color-brand-100: #d9e8ff;
+  --color-brand-200: #bcd7ff;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+
+  --color-sev-low: #16a34a;
+  --color-sev-medium: #d97706;
+  --color-sev-high: #ea580c;
+  --color-sev-critical: #dc2626;
+
+  --color-surface: #f4f6fb;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-surface);
+  color: #0f172a;
+  font-family: var(--font-sans);
+}
+
+/* Accessible focus ring everywhere */
+:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+/* Slim scrollbars for panels */
+.thin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #c3ccdd;
+  border-radius: 3px;
+}
