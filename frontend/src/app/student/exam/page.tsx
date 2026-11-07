@@ -4,12 +4,13 @@
 // The camera pipeline here is the REAL ML service (webcam_demo.py `/ws`);
 // exam content is a clearly labeled development preview (no LMS exists).
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Headset, MonitorX, Send, Timer } from "lucide-react";
 import { useRequireRole } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { ExamService } from "@/lib/services";
+import { apiConnected, LiveApi } from "@/lib/live-api";
 import { Badge, Banner, Button, Card, CardHeader, Modal, cn, useToast } from "@/components/ui";
 import { CameraPreview } from "@/components/monitoring/camera-preview";
 import { CalibrationPanel } from "@/components/monitoring/calibration-panel";
@@ -43,6 +44,8 @@ function ExamInterface() {
   const [submitOpen, setSubmitOpen] = useState(false);
   const [finished, setFinished] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
+  const backendSessionId = params.get("session");
+  const mlRegistered = useRef(false);
   // Session-local countdown — authoritative session timing requires the backend.
   const [secondsLeft, setSecondsLeft] = useState((exam?.duration_min ?? 90) * 60);
 
@@ -52,13 +55,33 @@ function ExamInterface() {
     return () => clearInterval(t);
   }, [finished]);
 
+  // Verified ML↔exam mapping: the first event from the ML service carries the
+  // ML session id; register it against the backend exam session exactly once.
+  useEffect(() => {
+    if (!apiConnected() || !backendSessionId || mlRegistered.current) return;
+    if (monitor.events.length === 0) return;
+    const mlSessionId = monitor.events[0].session_id;
+    if (!mlSessionId) return;
+    mlRegistered.current = true;
+    LiveApi.registerMlSession(backendSessionId, mlSessionId).catch((e) =>
+      toast.push("danger", e instanceof Error ? e.message : "ML session registration failed")
+    );
+  }, [monitor.events, backendSessionId, toast]);
+
   const submit = () => {
     setSubmitOpen(false);
     monitor.stop(); // release camera + socket cleanly at session end
+    if (apiConnected() && backendSessionId) {
+      LiveApi.endSession(backendSessionId).catch(() => {
+        /* session end is best-effort from here; server keeps the record */
+      });
+    }
     setFinished(true);
     toast.push(
       "info",
-      "Exam submitted in demo mode. With the ML service connected, flagged events were persisted by the server to events/live_*.jsonl."
+      apiConnected()
+        ? "Exam submitted — the backend closed your session. Flagged events are persisted and queued for human proctor review."
+        : "Exam submitted in demo mode. With the ML service connected, flagged events were persisted by the server to events/live_*.jsonl."
     );
   };
 

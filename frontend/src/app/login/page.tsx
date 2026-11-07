@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, GraduationCap, KeyRound } from "lucide-react";
 import { useAuth, ROLE_HOME } from "@/lib/auth";
 import { AuthService } from "@/lib/services";
+import { LiveApi } from "@/lib/live-api";
+import { config } from "@/lib/config";
 import type { Role } from "@/lib/types";
 import { institutions } from "@/lib/fixtures";
 import { Banner, Button, Field, Input, Select, Tabs, useToast } from "@/components/ui";
@@ -13,7 +15,7 @@ import { Banner, Button, Field, Input, Select, Tabs, useToast } from "@/componen
 const DEMO_ACCOUNTS: Record<Role, string> = {
   student: "maria.santos@westbridge.edu",
   proctor: "e.cruz@westbridge.edu",
-  admin: "d.bacusmo@aism.edu",
+  admin: "admin@aism.local",
   appeals: "p.mendoza@appeals.aism.edu",
 };
 
@@ -27,6 +29,7 @@ export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
   const [institutionId, setInstitutionId] = useState("inst_westbridge");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,6 +42,34 @@ export default function LoginPage() {
       setError("Password is required.");
       return;
     }
+
+    if (config.apiEnabled) {
+      // REAL backend authentication (bcrypt + JWT, server-enforced roles).
+      setSubmitting(true);
+      LiveApi.login(email, password)
+        .then((apiUser) => {
+          const user = {
+            user_id: apiUser.user_id,
+            role: apiUser.role as Role,
+            full_name: apiUser.full_name,
+            email: apiUser.email,
+            institution_id: apiUser.institution_id,
+            roster_id: apiUser.roster_id ?? undefined,
+            department: apiUser.department ?? undefined,
+            approval_status: apiUser.approval_status as "approved" | "pending",
+            consent_status: apiUser.consent_status as "granted" | "revoked" | "none",
+          };
+          login(user);
+          toast.push("success", `Signed in as ${user.full_name} (backend-verified session).`);
+          router.replace(ROLE_HOME[user.role]);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Authentication failed.");
+        })
+        .finally(() => setSubmitting(false));
+      return;
+    }
+
     const user = AuthService.login(email, role);
     if (!user) {
       setError(`No demo ${role} account matches that email. Use "${DEMO_ACCOUNTS[role]}".`);
@@ -63,11 +94,20 @@ export default function LoginPage() {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
-          {demoMode && (
-            <Banner tone="demo" className="mb-4">
-              <strong>Demo authentication.</strong> No credentials are verified — this repository
-              has no auth backend. Use a demo account below to explore the role-specific views.
+          {config.apiEnabled ? (
+            <Banner tone="success" className="mb-4">
+              <strong>Backend connected.</strong> Credentials are verified server-side (bcrypt +
+              JWT, role enforcement). Bootstrap accounts: student/proctor use{" "}
+              <code>demo1234</code>, admin uses the <code>BOOTSTRAP_ADMIN_PASSWORD</code>.
             </Banner>
+          ) : (
+            demoMode && (
+              <Banner tone="demo" className="mb-4">
+                <strong>Demo authentication.</strong> No credentials are verified — the backend is
+                not connected (set <code>NEXT_PUBLIC_API_ENABLED=true</code>). Use a demo account
+                to explore the role-specific views.
+              </Banner>
+            )
           )}
 
           <Tabs<Role>
@@ -147,8 +187,8 @@ export default function LoginPage() {
               </Link>
             </div>
 
-            <Button type="submit" className="w-full">
-              Sign in
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Signing in…" : "Sign in"}
             </Button>
           </form>
 

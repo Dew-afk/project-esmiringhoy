@@ -1,0 +1,36 @@
+# Development infrastructure for AIsmering: PostgreSQL + Redis.
+# Usage: docker compose up -d   (credentials are dev-only, from env defaults)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aism
+      POSTGRES_PASSWORD: aism-dev
+      POSTGRES_DB: aism
+    ports:
+      # 5433: a native postgres service already owns host port 5432 here
+      - "5433:5432"
+    volumes:
+      - aism_pgdata_v2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aism -d aism"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - aism_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  aism_pgdata_v2:
+  aism_redisdata:

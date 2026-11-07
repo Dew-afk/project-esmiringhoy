@@ -9,16 +9,41 @@ import { Scale, Sparkles } from "lucide-react";
 import { useRequireRole } from "@/lib/auth";
 import { appealsCases } from "@/lib/fixtures";
 import { EventService, SessionService } from "@/lib/services";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
 import { eventTypeLabel, SeverityBadge } from "@/components/severity";
 import { formatClock, formatDateTime } from "@/lib/format";
 import { Badge, Banner, Card, CardHeader, EmptyState, cn } from "@/components/ui";
 
 export default function AppealsPage() {
-  const user = useRequireRole(["appeals"]);
+  const user = useRequireRole(["appeals", "admin"]);
+  const live = apiConnected();
+  const liveCases = useLiveData(LiveApi.appealsCases, live);
   const [selectedId, setSelectedId] = useState<string | null>(appealsCases[0]?.case_id ?? null);
+  const selectedSessionId = live
+    ? liveCases.data?.find((c) => c.case_id === selectedId)?.session_id ?? null
+    : appealsCases.find((c) => c.case_id === selectedId)?.session_id ?? null;
+  const liveEvents = useLiveData(
+    () => (selectedSessionId ? LiveApi.sessionEvents(selectedSessionId) : Promise.resolve([])),
+    live && !!selectedSessionId
+  );
+  const liveSession = useLiveData(
+    () => (selectedSessionId ? LiveApi.session(selectedSessionId) : Promise.resolve(null)),
+    live && !!selectedSessionId
+  );
 
   if (!user) return null;
-  const selected = appealsCases.find((c) => c.case_id === selectedId) ?? null;
+  const cases = live
+    ? (liveCases.data ?? []).map((c) => ({
+        case_id: c.case_id,
+        session_id: c.session_id,
+        student_name: c.student_name,
+        exam_title: c.exam_title,
+        opened_at: c.opened_at,
+        status: c.status as "open" | "under_review" | "closed",
+        notes: c.notes.map((text) => ({ author: "Proctor (escalation note)", text, at: c.opened_at })),
+      }))
+    : appealsCases;
+  const selected = cases.find((c) => c.case_id === selectedId) ?? null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -35,14 +60,21 @@ export default function AppealsPage() {
         determination is ever produced by the software (human-in-the-loop, SRS 3.6).
       </Banner>
 
-      <Banner tone="demo">
-        <strong>Demo fixtures.</strong> Cases, notes, and evidence references are labeled
-        development fixtures; the backend appeals service is not implemented.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> Cases come from real escalated events in your
+          institution. No adjudication is performed by this system.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Demo fixtures.</strong> Cases, notes, and evidence references are labeled
+          development fixtures; the backend appeals service is not connected.
+        </Banner>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         <div className="space-y-2">
-          {appealsCases.map((c) => (
+          {cases.map((c) => (
             <button
               key={c.case_id}
               onClick={() => setSelectedId(c.case_id)}
@@ -62,7 +94,7 @@ export default function AppealsPage() {
               <p className="text-[10px] text-slate-400">{c.case_id} · opened {formatDateTime(c.opened_at)}</p>
             </button>
           ))}
-          {appealsCases.length === 0 && (
+          {cases.length === 0 && (
             <EmptyState icon={<Scale className="h-10 w-10" />} title="No cases assigned" />
           )}
         </div>
@@ -73,15 +105,25 @@ export default function AppealsPage() {
               <CardHeader title={`Case ${selected.case_id}`} subtitle={`${selected.student_name} · ${selected.exam_title}`} />
               <div className="space-y-3 px-5 py-4">
                 {(() => {
-                  const session = SessionService.get(selected.session_id);
-                  const events = EventService.forSession(selected.session_id);
+                  const session = live ? liveSession.data : SessionService.get(selected.session_id);
+                  const events = live
+                    ? (liveEvents.data ?? []).map((e) => ({
+                        event_id: e.event_id,
+                        event_type: e.event_type,
+                        severity: (e.severity_override ?? e.severity) as "low" | "medium" | "high" | "critical",
+                        severity_override: undefined as "low" | "medium" | "high" | "critical" | undefined,
+                        start_s: e.start_s,
+                        end_s: e.end_s,
+                        duration_s: e.duration_s,
+                      }))
+                    : EventService.forSession(selected.session_id);
                   return (
                     <>
                       {session && (
                         <p className="text-xs text-slate-600">
                           Session <code className="rounded bg-slate-100 px-1">{session.session_id}</code> ·{" "}
-                          {session.start_time ? `started ${formatDateTime(session.start_time)}` : "timing unavailable"} ·{" "}
-                          Advisory risk score: {session.risk_score ?? "not connected"} (demo fixture)
+                          {session.start_time ? `started ${formatDateTime(String(session.start_time))}` : "timing unavailable"} ·{" "}
+                          Advisory risk score: {session.risk_score ?? "not connected"}{live ? "" : " (demo fixture)"}
                         </p>
                       )}
                       <div>

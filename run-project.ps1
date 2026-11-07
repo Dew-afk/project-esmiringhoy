@@ -11,6 +11,11 @@ if (-not (Test-Path (Join-Path $frontendPath "package.json"))) {
     throw "Could not find the frontend project at '$frontendPath'."
 }
 
+# ML inference server in its own window (the UI shows its live status)
+Start-Process powershell -ArgumentList '-NoExit','-Command','python "machine learning/webcam_demo.py"'
+# Open the browser once the dev server is up
+Start-Process powershell -WindowStyle Hidden -ArgumentList '-Command','Start-Sleep 8; Start-Process "http://localhost:3000"'
+
 Push-Location $frontendPath
 try {
     if (-not (Test-Path (Join-Path $frontendPath "node_modules"))) {

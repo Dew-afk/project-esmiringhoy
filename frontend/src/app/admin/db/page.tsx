@@ -8,9 +8,9 @@
 import { useMemo, useState } from "react";
 import { Database, Trash2 } from "lucide-react";
 import { useRequireRole } from "@/lib/auth";
-import { AdminService } from "@/lib/services";
 import { dbTables } from "@/lib/fixtures";
-import { Badge, Banner, Button, Card, CardHeader, Input, Pagination, Select, useToast } from "@/components/ui";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
+import { Badge, Banner, Button, Card, CardHeader, Input, Modal, Pagination, Select, useToast } from "@/components/ui";
 
 const PAGE_SIZE = 8;
 
@@ -23,21 +23,52 @@ export default function DatabaseViewer() {
   const [table, setTable] = useState("UserAccount");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  const live = apiConnected();
+  const liveTables = useLiveData(LiveApi.dbTables, live);
+  const liveRows = useLiveData(() => LiveApi.dbRows(table, PAGE_SIZE, (page - 1) * PAGE_SIZE), live);
 
   const rows = useMemo(() => {
+    if (live) {
+      const data = liveRows.data?.rows ?? [];
+      if (!query) return data;
+      const q = query.toLowerCase();
+      return data.filter((r) =>
+        Object.values(r).some((v) => String(v).toLowerCase().includes(q))
+      );
+    }
     const all = dbTables[table] ?? [];
     if (!query) return all;
     const q = query.toLowerCase();
     return all.filter((r) =>
       Object.values(r).some((v) => String(v).toLowerCase().includes(q))
     );
-  }, [table, query]);
+  }, [live, liveRows.data, table, query]);
 
   if (!user) return null;
 
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const columns = pageRows.length > 0 ? Object.keys(pageRows[0]) : [];
+  const totalRows = live ? (liveRows.data?.total ?? 0) : rows.length;
+  const pages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const pageRows = rows.slice(0, PAGE_SIZE);
+  const columns = live
+    ? liveRows.data?.columns ?? []
+    : pageRows.length > 0
+      ? Object.keys(pageRows[0])
+      : [];
+
+  const doDelete = (recordId: string) => {
+    LiveApi.dbDelete(table, recordId)
+      .then(() => {
+        toast.push("success", `Deleted ${table}:${recordId} — audit-logged.`);
+        setConfirmDelete(null);
+        liveRows.reload();
+      })
+      .catch((e) => {
+        toast.push("danger", e instanceof Error ? e.message : "Delete refused");
+        setConfirmDelete(null);
+      });
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -48,12 +79,21 @@ export default function DatabaseViewer() {
         </p>
       </div>
 
-      <Banner tone="demo">
-        <strong>Read-only demo viewer.</strong> Rows are labeled fixtures. Deletion is disabled by
-        design here: the backend safeguards — role authorization, dedicated test-Institution
-        verification, explicit confirmation, dependency-order hard deletion, and audit logging —
-        are not implemented, so no delete path is offered.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> Rows are real, institution-scoped, read-only by
+          default. Deletion is server-enforced: role authorization, dedicated test-Institution
+          verification, explicit confirmation, dependency-order hard deletion, audit logging.
+          Protected tables ({liveTables.data?.protected.join(", ")}) are never deletable.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Read-only demo viewer.</strong> Rows are labeled fixtures. Deletion is disabled
+          by design here: the backend safeguards — role authorization, dedicated test-Institution
+          verification, explicit confirmation, dependency-order hard deletion, and audit logging —
+          are not implemented, so no delete path is offered.
+        </Banner>
+      )}
 
       <Card>
         <CardHeader
@@ -68,7 +108,7 @@ export default function DatabaseViewer() {
           action={
             <div className="flex flex-wrap items-center gap-2">
               <Select value={table} onChange={(e) => { setTable(e.target.value); setPage(1); setQuery(""); }} className="w-48" aria-label="Select table">
-                {Object.keys(dbTables).map((t) => (
+                {(live ? liveTables.data?.tables ?? [] : Object.keys(dbTables)).map((t) => (
                   <option key={t} value={t}>{t}</option>
                 ))}
               </Select>
@@ -106,15 +146,26 @@ export default function DatabaseViewer() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled
+                        disabled={
+                          !live ||
+                          (liveTables.data
+                            ? !liveTables.data.deletable.includes(table)
+                            : PROTECTED_TABLES.includes(table) || NON_DELETABLE_TABLES.includes(table))
+                        }
                         title={
-                          PROTECTED_TABLES.includes(table) || NON_DELETABLE_TABLES.includes(table)
-                            ? `${table} is never deletable through this interface (SDD §5.8).`
-                            : "Deletion requires backend safeguards: role gate, test-Institution verification, confirmation, and audit logging."
+                          !live
+                            ? "Deletion requires the backend (role gate, test-Institution verification, confirmation, audit logging)."
+                            : liveTables.data && !liveTables.data.deletable.includes(table)
+                              ? `${table} is never deletable through this interface (SDD §5.8).`
+                              : "Backend verifies the record belongs to the dedicated test institution before deleting."
                         }
                         onClick={() => {
-                          const res = AdminService.deleteRecord(table, String(row.id ?? i));
-                          if (!res.ok) toast.push("warning", res.reason);
+                          const recordId = row.id ?? row.user_id ?? row.session_id ?? row.exam_id;
+                          if (recordId === undefined || recordId === null) {
+                            toast.push("warning", "No record id available for this row.");
+                            return;
+                          }
+                          setConfirmDelete(String(recordId));
                         }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -128,6 +179,26 @@ export default function DatabaseViewer() {
         )}
         <Pagination page={page} pages={pages} onChange={setPage} />
       </Card>
+
+      <Modal
+        open={confirmDelete !== null}
+        title="Delete record?"
+        onClose={() => setConfirmDelete(null)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => confirmDelete && doDelete(confirmDelete)}>
+              Delete permanently
+            </Button>
+          </>
+        }
+      >
+        <p>
+          Deleting <strong>{table}:{confirmDelete}</strong> is hard deletion in dependency order
+          (SDD §5.8). The backend will refuse unless the record belongs to the dedicated test
+          institution; every deletion is audit-logged. This cannot be undone.
+        </p>
+      </Modal>
 
       <div className="grid gap-3 text-xs text-slate-500 md:grid-cols-2">
         <Card className="px-5 py-4">

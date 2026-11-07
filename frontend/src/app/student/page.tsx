@@ -5,9 +5,28 @@ import { CalendarDays, Camera, Clock, GraduationCap, Mic, PlayCircle, ShieldChec
 import { useRequireRole } from "@/lib/auth";
 import { ExamService } from "@/lib/services";
 import { institutionById } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
+import type { ApiExam } from "@/lib/api";
 import type { Exam } from "@/lib/types";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
-import { Badge, Button, Card, CardHeader, EmptyState } from "@/components/ui";
+import { Badge, Banner, Button, Card, CardHeader, EmptyState } from "@/components/ui";
+
+function apiExamToExam(a: ApiExam): Exam {
+  return {
+    exam_id: a.exam_id,
+    title: a.title,
+    course_code: a.course_code,
+    institution_id: a.institution_id,
+    window_start: a.window_start,
+    window_end: a.window_end,
+    duration_min: a.duration_min,
+    allowed_materials: a.allowed_materials,
+    policy_template_id: a.policy_template_id,
+    status: a.status as Exam["status"],
+    roster_ids: [],
+    accommodations: [],
+  };
+}
 
 const STATUS_BADGE: Record<Exam["status"], { tone: "neutral" | "brand" | "success" | "warning"; label: string }> = {
   draft: { tone: "neutral", label: "Draft" },
@@ -19,12 +38,31 @@ const STATUS_BADGE: Record<Exam["status"], { tone: "neutral" | "brand" | "succes
 
 export default function StudentDashboard() {
   const user = useRequireRole(["student"]);
+  const live = apiConnected();
+  const liveExams = useLiveData(LiveApi.myExams, live);
+
   if (!user) return null;
 
-  const all = ExamService.list().filter((e) => e.status !== "draft" && e.status !== "archived");
+  const fixture = ExamService.list().filter((e) => e.status !== "draft" && e.status !== "archived");
+  const all: Exam[] = live
+    ? (liveExams.data ?? []).map(apiExamToExam)
+    : fixture;
   const upcoming = all.filter((e) => e.status === "scheduled");
   const inProgress = all.filter((e) => e.status === "in_progress");
   const completed = all.filter((e) => e.status === "completed");
+
+  if (live && liveExams.loading) {
+    return <p className="py-10 text-center text-sm text-slate-500">Loading your examinations…</p>;
+  }
+  if (live && liveExams.error) {
+    return (
+      <Banner tone="danger">
+        <strong>Backend unavailable:</strong> {liveExams.error}. Start the API{" "}
+        (<code>uvicorn app.main:app --port 8010</code> in <code>backend/</code>) or set{" "}
+        <code>NEXT_PUBLIC_API_ENABLED=false</code> for demo fixtures.
+      </Banner>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">

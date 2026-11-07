@@ -21,11 +21,31 @@ import { useRequireRole } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { ExamService } from "@/lib/services";
 import { institutionById } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
+import type { ApiExam } from "@/lib/api";
+import type { Exam } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 import { Badge, Banner, Button, Card, cn, useToast } from "@/components/ui";
 import { CameraPreview } from "@/components/monitoring/camera-preview";
 import { CalibrationPanel } from "@/components/monitoring/calibration-panel";
 import { useMonitoring } from "@/components/monitoring/use-monitoring";
+
+function apiExamToExam(a: ApiExam): Exam {
+  return {
+    exam_id: a.exam_id,
+    title: a.title,
+    course_code: a.course_code,
+    institution_id: a.institution_id,
+    window_start: a.window_start,
+    window_end: a.window_end,
+    duration_min: a.duration_min,
+    allowed_materials: a.allowed_materials,
+    policy_template_id: a.policy_template_id,
+    status: a.status as Exam["status"],
+    roster_ids: [],
+    accommodations: [],
+  };
+}
 
 const STEPS = [
   "Overview",
@@ -53,9 +73,16 @@ function CheckInFlow() {
   const toast = useToast();
   const params = useSearchParams();
 
+  const live = apiConnected();
+  const liveExams = useLiveData(LiveApi.myExams, live);
+  const fixtureExams = ExamService.list();
   const exam =
-    ExamService.list().find((e) => e.exam_id === params.get("exam")) ??
-    ExamService.list().find((e) => e.status === "in_progress" || e.status === "scheduled") ??
+    (live
+      ? (liveExams.data ?? []).map(apiExamToExam).find((e) => e.exam_id === params.get("exam"))
+      : fixtureExams.find((e) => e.exam_id === params.get("exam"))) ??
+    (live
+      ? (liveExams.data ?? []).map(apiExamToExam).find((e) => e.status === "in_progress" || e.status === "scheduled")
+      : fixtureExams.find((e) => e.status === "in_progress" || e.status === "scheduled")) ??
     null;
 
   const [step, setStep] = useState(0);
@@ -141,6 +168,18 @@ function CheckInFlow() {
   const enterExam = () => {
     if (!calibrated && monitor.phase !== "live") return;
     monitor.stop();
+    if (apiConnected() && exam) {
+      LiveApi.createSession(exam.exam_id)
+        .then((s) => {
+          toast.push("success", "Exam session created by the backend (idempotent resume).");
+          router.push(`/student/exam?exam=${exam.exam_id}&session=${s.session_id}`);
+        })
+        .catch((e) => {
+          toast.push("danger", e instanceof Error ? e.message : "Could not create the session");
+          setStep(6);
+        });
+      return;
+    }
     toast.push("info", "Entering the examination — a fresh monitoring session will start.");
     router.push(`/student/exam?exam=${exam?.exam_id ?? ""}`);
   };

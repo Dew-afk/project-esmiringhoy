@@ -20,10 +20,32 @@ import {
 import { useRequireRole } from "@/lib/auth";
 import { EventService, SessionService } from "@/lib/services";
 import { examById, institutionById, userById } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
+import { config } from "@/lib/config";
+import type { ApiEvent } from "@/lib/api";
 import { SEVERITY_META, SeverityBadge, detectorLabel, eventTypeLabel, reviewStatusLabel } from "@/components/severity";
 import type { EventFlag, Severity } from "@/lib/types";
 import { formatClock, formatDateTime, formatDuration } from "@/lib/format";
-import { Badge, Banner, Button, Card, CardHeader, Modal, Select, useToast } from "@/components/ui";
+import { Badge, Banner, Button, Card, CardHeader, Modal, Select, Textarea, useToast } from "@/components/ui";
+
+function apiEventToFlag(e: ApiEvent): EventFlag {
+  return {
+    event_id: e.event_id,
+    session_id: e.session_id,
+    event_type: e.event_type as EventFlag["event_type"],
+    severity: e.severity as Severity,
+    start_s: e.start_s,
+    end_s: e.end_s,
+    duration_s: e.duration_s,
+    peak_yaw_dev: e.peak_yaw_dev ?? undefined,
+    peak_gaze_dev: e.peak_gaze_dev ?? undefined,
+    detector: (e.detector as "pose_mediapipe" | "yolo11n") || "pose_mediapipe",
+    policy_ref: e.policy_ref,
+    review_status: (e.review_status as EventFlag["review_status"]) ?? "pending",
+    reviewer_note: e.reviewer_note ?? undefined,
+    severity_override: (e.severity_override as Severity | null) ?? undefined,
+  };
+}
 
 export default function SessionDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -33,12 +55,18 @@ export default function SessionDetail({ params }: { params: Promise<{ id: string
 function SessionReview({ sessionId }: { sessionId: string }) {
   const user = useRequireRole(["proctor"]);
   const toast = useToast();
-  const session = SessionService.get(sessionId);
-  const events = EventService.forSession(sessionId);
+  const live = apiConnected();
+  const liveSession = useLiveData(() => LiveApi.session(sessionId), live);
+  const liveEvents = useLiveData(() => LiveApi.sessionEvents(sessionId), live);
+  const fixtureSession = SessionService.get(sessionId);
+  const fixtureEvents = EventService.forSession(sessionId);
+  const session = live ? (liveSession.data ? { ...fixtureSession, session_id: liveSession.data.session_id, exam_id: liveSession.data.exam_id, student_id: liveSession.data.student_id, status: liveSession.data.status, start_time: liveSession.data.start_time, end_time: liveSession.data.end_time, risk_score: liveSession.data.risk_score, last_event_at: liveSession.data.last_event_at, recording_available: false, monitoring_state: "active" as const } : fixtureSession) : fixtureSession;
+  const events = live ? (liveEvents.data ?? []).map(apiEventToFlag) : fixtureEvents;
   const [selected, setSelected] = useState<EventFlag | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideSeverity, setOverrideSeverity] = useState<Severity>("medium");
+  const [noteText, setNoteText] = useState("");
 
   if (!user) return null;
   if (!session) {
@@ -47,7 +75,9 @@ function SessionReview({ sessionId }: { sessionId: string }) {
         <Link href="/proctor" className="inline-flex items-center gap-1 text-xs text-brand-700 hover:underline">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to monitoring
         </Link>
-        <Banner tone="warning">Session not found in demo fixtures.</Banner>
+        <Banner tone="warning">
+          {live ? "Session not found in the backend." : "Session not found in demo fixtures."}
+        </Banner>
       </div>
     );
   }
@@ -60,6 +90,20 @@ function SessionReview({ sessionId }: { sessionId: string }) {
 
   const reviewUnavailable = (feature: string) =>
     toast.push("warning", `${feature} requires the backend review API — nothing was sent or persisted.`);
+
+  const doReview = (eventId: string, action: string, note?: string, severity?: Severity) => {
+    if (!live) {
+      reviewUnavailable(action);
+      return;
+    }
+    LiveApi.reviewEvent(eventId, action, note, severity)
+      .then(() => {
+        toast.push("success", `${action} recorded — audit-logged by the backend.`);
+        liveEvents.reload();
+        setSelected(null);
+      })
+      .catch((e) => toast.push("danger", e instanceof Error ? e.message : "Review failed"));
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -82,11 +126,19 @@ function SessionReview({ sessionId }: { sessionId: string }) {
         </Badge>
       </div>
 
-      <Banner tone="demo">
-        <strong>Demo session.</strong> Events below are labeled fixtures. Review actions, the AI
-        summary, and recording export require backend services that are not implemented — the
-        buttons show their real unavailable state and nothing is persisted.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> Events and review actions are real, server-enforced,
+          and audit-logged. Risk scores are advisory. The AI summary and recording export remain
+          unavailable until those services are configured.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Demo session.</strong> Events below are labeled fixtures. Review actions, the AI
+          summary, and recording export require the backend — the buttons show their real
+          unavailable state and nothing is persisted.
+        </Banner>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="px-5 py-4">
@@ -136,9 +188,23 @@ function SessionReview({ sessionId }: { sessionId: string }) {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => reviewUnavailable("Bulk review")}
-              disabled
-              title="Bulk review requires the backend review API"
+              disabled={!live}
+              title={live ? "Dismisses all low-severity events of this session" : "Bulk review requires the backend review API"}
+              onClick={() => {
+                const eligible = events
+                  .filter((ev) => (ev.severity_override ?? ev.severity) === "low")
+                  .map((ev) => ev.event_id);
+                if (eligible.length === 0) {
+                  toast.push("info", "No low-severity events eligible for bulk review.");
+                  return;
+                }
+                LiveApi.bulkReview(sessionId, eligible)
+                  .then(() => {
+                    toast.push("success", `Dismissed ${eligible.length} low-severity events — audit-logged.`);
+                    liveEvents.reload();
+                  })
+                  .catch((err) => toast.push("danger", err instanceof Error ? err.message : "Bulk review failed"));
+              }}
             >
               <CheckCircle2 className="h-3.5 w-3.5" /> Bulk review low-severity
             </Button>
@@ -216,25 +282,25 @@ function SessionReview({ sessionId }: { sessionId: string }) {
               </p>
             )}
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled title="Requires the backend review API" onClick={() => reviewUnavailable("Acknowledge")}>
+              <Button size="sm" disabled={!live} title={live ? "Server-enforced + audit-logged" : "Requires the backend review API"} onClick={() => doReview(selected.event_id, "acknowledge")}>
                 <CheckCircle2 className="h-3.5 w-3.5" /> Acknowledge
               </Button>
-              <Button size="sm" variant="secondary" disabled title="Requires the backend review API" onClick={() => reviewUnavailable("Dismiss")}>
+              <Button size="sm" variant="secondary" disabled={!live} title={live ? "Server-enforced + audit-logged" : "Requires the backend review API"} onClick={() => doReview(selected.event_id, "dismiss")}>
                 <Ban className="h-3.5 w-3.5" /> Dismiss
               </Button>
-              <Button size="sm" variant="secondary" disabled title="Requires the backend review API" onClick={() => reviewUnavailable("Escalate")}>
+              <Button size="sm" variant="secondary" disabled={!live} title={live ? "Server-enforced + audit-logged" : "Requires the backend review API"} onClick={() => doReview(selected.event_id, "escalate")}>
                 <Scale className="h-3.5 w-3.5" /> Escalate
               </Button>
-              <Button size="sm" variant="secondary" disabled title="Requires the backend review API" onClick={() => setNoteOpen(true)}>
+              <Button size="sm" variant="secondary" disabled={!live} title={live ? "Server-enforced + audit-logged" : "Requires the backend review API"} onClick={() => setNoteOpen(true)}>
                 <MessageSquarePlus className="h-3.5 w-3.5" /> Add note
               </Button>
-              <Button size="sm" variant="secondary" disabled title="Requires the backend review API" onClick={() => setOverrideOpen(true)}>
+              <Button size="sm" variant="secondary" disabled={!live} title={live ? "Server-enforced + audit-logged" : "Requires the backend review API"} onClick={() => setOverrideOpen(true)}>
                 <Flag className="h-3.5 w-3.5" /> Override severity
               </Button>
             </div>
             <p className="text-[11px] text-slate-400">
               All review actions write to AuditLog and retain the original severity — enforced by
-              the backend review API (SDD §5.6). Not available in this repository yet.
+              the backend review API (SDD §5.6){live ? " (connected)." : " — not available in demo mode."}
             </p>
           </div>
         </Card>
@@ -266,15 +332,21 @@ function SessionReview({ sessionId }: { sessionId: string }) {
         <Card>
           <CardHeader title={<span className="flex items-center gap-1.5"><Video className="h-4 w-4 text-slate-500" /> Session recording</span>} subtitle="Completed-session playback & export" />
           <div className="px-5 py-4">
-            <Banner tone="info">
-              <strong>Recording unavailable.</strong> Recordings stream to encrypted object storage
-              through a backend that is not implemented here. Playback, timeline markers, and
-              export (presigned URL + audit log) will appear once connected. No recording is
-              fabricated.
-            </Banner>
-            <Button size="sm" className="mt-3" disabled title="Requires object storage + backend authorization">
-              <Download className="h-3.5 w-3.5" /> Export recording
-            </Button>
+            {live ? (
+              <LiveRecordingsPanel sessionId={sessionId} />
+            ) : (
+              <>
+                <Banner tone="info">
+                  <strong>Recording unavailable.</strong> Recordings stream to encrypted object
+                  storage through a backend that is not implemented here. Playback, timeline
+                  markers, and export (presigned URL + audit log) will appear once connected. No
+                  recording is fabricated.
+                </Banner>
+                <Button size="sm" className="mt-3" disabled title="Requires object storage + backend authorization">
+                  <Download className="h-3.5 w-3.5" /> Export recording
+                </Button>
+              </>
+            )}
           </div>
         </Card>
       </div>
@@ -283,28 +355,112 @@ function SessionReview({ sessionId }: { sessionId: string }) {
         open={noteOpen}
         title="Add reviewer note"
         onClose={() => setNoteOpen(false)}
-        footer={<Button variant="secondary" onClick={() => setNoteOpen(false)}>Close</Button>}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setNoteOpen(false)}>Cancel</Button>
+            <Button disabled={!live} onClick={() => { if (selected) doReview(selected.event_id, "note", noteText); setNoteOpen(false); }}>
+              Save note
+            </Button>
+          </>
+        }
       >
-        <p>Reviewer notes require the backend review API and are audit-logged — not available.</p>
+        {live ? (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">The note is attached to the event and audit-logged.</p>
+            <Textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Context for later review or appeal…" />
+          </div>
+        ) : (
+          <p>Reviewer notes require the backend review API and are audit-logged — not available.</p>
+        )}
       </Modal>
       <Modal
         open={overrideOpen}
         title="Override severity"
         onClose={() => setOverrideOpen(false)}
-        footer={<Button variant="secondary" onClick={() => setOverrideOpen(false)}>Close</Button>}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setOverrideOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!live}
+              onClick={() => { if (selected) doReview(selected.event_id, "override", undefined, overrideSeverity); setOverrideOpen(false); }}
+            >
+              Apply override
+            </Button>
+          </>
+        }
       >
         <div className="space-y-3">
-          <p>
+          <p className="text-xs leading-relaxed text-slate-500">
             The backend retains <strong>both</strong> the original and overridden severity for
-            audit (SDD §5.6). This operation requires the backend:
+            audit (SDD §5.6).
           </p>
-          <Select value={overrideSeverity} onChange={(e) => setOverrideSeverity(e.target.value as Severity)}>
-            {(["low", "medium", "high", "critical"] as Severity[]).map((s) => (
-              <option key={s} value={s}>{SEVERITY_META[s].label}</option>
-            ))}
-          </Select>
+          {live ? (
+            <Select value={overrideSeverity} onChange={(e) => setOverrideSeverity(e.target.value as Severity)}>
+              {(["low", "medium", "high", "critical"] as Severity[]).map((s) => (
+                <option key={s} value={s}>{SEVERITY_META[s].label}</option>
+              ))}
+            </Select>
+          ) : (
+            <p>This operation requires the backend — not available in demo mode.</p>
+          )}
         </div>
       </Modal>
+    </div>
+  );
+}
+
+function LiveRecordingsPanel({ sessionId }: { sessionId: string }) {
+  const toast = useToast();
+  const recs = useLiveData(() => LiveApi.recordings(sessionId), true);
+  const [exportUrl, setExportUrl] = useState<string | null>(null);
+
+  if (recs.loading) return <p className="text-xs text-slate-500">Loading recordings…</p>;
+  if (recs.error) return <Banner tone="danger">Recording service error: {recs.error}</Banner>;
+  const list = recs.data ?? [];
+  if (list.length === 0) {
+    return (
+      <Banner tone="info">
+        <strong>No recordings captured for this session.</strong> Client-side recording capture is
+        not implemented yet — nothing is fabricated here.
+      </Banner>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {list.map((r) => (
+        <div key={r.recording_id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="font-medium text-slate-800">{r.recording_id}.{r.format}</p>
+              <p className="text-[11px] text-slate-400">
+                {r.size_bytes} bytes · {r.available ? "available" : "unavailable"} ·{" "}
+                {r.dev_local ? "dev-local storage (plaintext — not production)" : "object storage"}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              disabled={!r.available}
+              title={r.available ? "Generates a short-lived signed URL (audit-logged)" : "Recording unavailable"}
+              onClick={() =>
+                LiveApi.exportRecording(r.recording_id)
+                  .then((res) => {
+                    setExportUrl(`${config.apiBaseUrl}${res.url}`);
+                    toast.push("success", "Export link issued (~5 min validity, audit-logged).");
+                  })
+                  .catch((e) => toast.push("danger", e instanceof Error ? e.message : "Export refused"))
+              }
+            >
+              <Download className="h-3.5 w-3.5" /> Export
+            </Button>
+          </div>
+          {exportUrl && (
+            <p className="mt-2 break-all text-[11px] text-brand-700">
+              <a href={exportUrl} target="_blank" rel="noreferrer">Open signed download link</a>{" "}
+              (short-lived, scoped to this recording)
+            </p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

@@ -9,11 +9,30 @@ import { CalendarDays, Plus, ShieldCheck } from "lucide-react";
 import { useRequireRole } from "@/lib/auth";
 import { ExamService } from "@/lib/services";
 import { institutionById, policyTemplates } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
+import type { ApiExam } from "@/lib/api";
 import type { Exam, ExamStatus } from "@/lib/types";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
 import { EVENT_CATALOG } from "@/lib/events";
 import { eventTypeLabel, SeverityBadge } from "@/components/severity";
 import { Badge, Banner, Button, Card, CardHeader, EmptyState, Field, Input, Modal, Select, Textarea, useToast } from "@/components/ui";
+
+function apiExamToExam(a: ApiExam): Exam {
+  return {
+    exam_id: a.exam_id,
+    title: a.title,
+    course_code: a.course_code,
+    institution_id: a.institution_id,
+    window_start: a.window_start,
+    window_end: a.window_end,
+    duration_min: a.duration_min,
+    allowed_materials: a.allowed_materials,
+    policy_template_id: a.policy_template_id,
+    status: a.status as ExamStatus,
+    roster_ids: [],
+    accommodations: [],
+  };
+}
 
 const STATUS_BADGE: Record<ExamStatus, { tone: "neutral" | "brand" | "warning" | "success"; label: string }> = {
   draft: { tone: "neutral", label: "Draft" },
@@ -45,10 +64,15 @@ const EMPTY_FORM = {
 export default function ExamManagement() {
   const user = useRequireRole(["admin"]);
   const toast = useToast();
-  const [exams, setExams] = useState<Exam[]>(() => ExamService.list());
+  const live = apiConnected();
+  const liveExams = useLiveData(LiveApi.listExams, live);
+  const livePolicies = useLiveData(LiveApi.policies, live);
+  const [fixtureExams, setFixtureExams] = useState<Exam[]>(() => ExamService.list());
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const exams = live ? (liveExams.data ?? []).map(apiExamToExam) : fixtureExams;
 
   const set = (k: string, v: string | number) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -64,8 +88,7 @@ export default function ExamManagement() {
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
-    const exam: Exam = {
-      exam_id: `exm_demo_${Date.now()}`,
+    const body = {
       title: form.title.trim(),
       course_code: form.course_code.trim() || "NEW",
       institution_id: form.institution_id,
@@ -74,20 +97,40 @@ export default function ExamManagement() {
       duration_min: Number(form.duration_min),
       allowed_materials: form.allowed_materials.split(",").map((m) => m.trim()).filter(Boolean),
       policy_template_id: form.policy_template_id,
-      status: "draft",
-      roster_ids: [],
-      accommodations: [],
     };
+
+    if (live) {
+      LiveApi.createExam(body)
+        .then(() => {
+          toast.push("success", "Exam created — persisted by the backend.");
+          liveExams.reload();
+        })
+        .catch((e) => toast.push("danger", e instanceof Error ? e.message : "Create failed"));
+      setCreating(false);
+      setForm(EMPTY_FORM);
+      return;
+    }
+
+    const exam: Exam = { ...body, exam_id: `exm_demo_${Date.now()}`, status: "draft", roster_ids: [], accommodations: [] };
     ExamService.create(exam);
-    setExams(ExamService.list());
+    setFixtureExams(ExamService.list());
     setCreating(false);
     setForm(EMPTY_FORM);
     toast.push("warning", "Demo memory only — the exam was added to this page's state, not persisted.");
   };
 
   const transition = (exam: Exam, next: ExamStatus) => {
+    if (live) {
+      LiveApi.transitionExam(exam.exam_id, next)
+        .then(() => {
+          toast.push("success", `Status → ${next} (server-enforced lifecycle).`);
+          liveExams.reload();
+        })
+        .catch((e) => toast.push("danger", e instanceof Error ? e.message : "Transition refused"));
+      return;
+    }
     ExamService.transition(exam.exam_id, next);
-    setExams(ExamService.list());
+    setFixtureExams(ExamService.list());
     toast.push("warning", `Demo memory only — status set to "${next}" locally; a real backend enforces the lifecycle and permissions.`);
   };
 
@@ -109,11 +152,18 @@ export default function ExamManagement() {
         <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> Create exam</Button>
       </div>
 
-      <Banner tone="demo">
-        <strong>Demo mode.</strong> Lifecycle changes below are local memory only — the real
-        backend enforces the Draft → Scheduled → In Progress → Completed → Archived state machine,
-        roster assignments, and audit logging.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> The server enforces the Draft → Scheduled → In
+          Progress → Completed → Archived state machine, roster rules, and audit logging.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Demo mode.</strong> Lifecycle changes below are local memory only — the real
+          backend enforces the Draft → Scheduled → In Progress → Completed → Archived state
+          machine, roster assignments, and audit logging.
+        </Banner>
+      )}
 
       {(Object.keys(grouped) as ExamStatus[]).map((status) =>
         grouped[status].map((exam) => (
@@ -164,7 +214,15 @@ export default function ExamManagement() {
       <Card>
         <CardHeader title="Proctoring policy templates" subtitle="Read-only — machine learning/policy.yaml (pose_v2) is the source of truth; management requires a backend" />
         <div className="grid gap-3 px-5 py-4 md:grid-cols-3">
-          {policyTemplates.map((p) => (
+          {(live
+            ? (livePolicies.data ?? []).map((p) => ({
+                policy_template_id: p.policy_template_id,
+                name: p.name,
+                description: p.description,
+                severity_map: p.severity_map as Record<string, never>,
+              }))
+            : policyTemplates
+          ).map((p) => (
             <div key={p.policy_template_id} className="rounded-lg border border-slate-200 p-3">
               <p className="text-xs font-semibold text-slate-800">{p.name}</p>
               <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{p.description}</p>
@@ -172,7 +230,7 @@ export default function ExamManagement() {
                 {Object.entries(p.severity_map).map(([type, sev]) => (
                   <li key={type} className="flex items-center justify-between text-[11px] text-slate-600">
                     <span>{eventTypeLabel(type)}{EVENT_CATALOG[type as keyof typeof EVENT_CATALOG].status !== "live" && " (not implemented yet)"}</span>
-                    <SeverityBadge severity={sev} />
+                    <SeverityBadge severity={sev as "low" | "medium" | "high" | "critical"} />
                   </li>
                 ))}
               </ul>
@@ -223,7 +281,7 @@ export default function ExamManagement() {
           </Field>
           <Field label="Proctoring policy template">
             <Select value={form.policy_template_id} onChange={(e) => set("policy_template_id", e.target.value)}>
-              {policyTemplates.map((p) => (
+              {(live ? livePolicies.data ?? [] : policyTemplates).map((p) => (
                 <option key={p.policy_template_id} value={p.policy_template_id}>{p.name}</option>
               ))}
             </Select>

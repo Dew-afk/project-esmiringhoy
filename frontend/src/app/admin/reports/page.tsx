@@ -9,6 +9,7 @@ import { Download, FileBarChart, FileText, Scale, ShieldCheck, Users } from "luc
 import { useRequireRole } from "@/lib/auth";
 import { ReportService } from "@/lib/services";
 import { examById, exams } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
 import { SEVERITY_META } from "@/components/severity";
 import { EVENT_CATALOG } from "@/lib/events";
 import { eventTypeLabel } from "@/components/severity";
@@ -29,12 +30,62 @@ export default function ReportsPage() {
   const [from, setFrom] = useState("2026-10-01");
   const [to, setTo] = useState("2026-10-31");
 
+  const live = apiConnected();
+  const liveExams = useLiveData(LiveApi.listExams, live);
+  const examList = live ? (liveExams.data ?? []) : exams;
+  const selectedExamId = examId !== "all" ? examId : examList[0]?.exam_id ?? "";
+  const cohort = useLiveData(
+    () => (selectedExamId ? LiveApi.cohort(selectedExamId) : Promise.resolve(null)),
+    live && !!selectedExamId
+  );
+
   if (!user) return null;
 
   const exportReport = (type: string) => {
     const res = ReportService.generate(type);
     if (!res.ok) toast.push("warning", res.reason);
   };
+
+  const sevChartItems = live && cohort.data
+    ? (["low", "medium", "high", "critical"] as const).map((s) => ({
+        label: SEVERITY_META[s].label,
+        value: cohort.data!.flag_distribution[s] ?? 0,
+        color: SEVERITY_META[s].hex,
+      }))
+    : (["low", "medium", "high", "critical"] as const).map((s) => ({
+        label: SEVERITY_META[s].label,
+        value: { low: 4, medium: 7, high: 2, critical: 1 }[s],
+        color: SEVERITY_META[s].hex,
+      }));
+
+  const riskBins = live && cohort.data
+    ? (() => {
+        const v = cohort.data!.risk_score_distribution.values;
+        return [
+          { label: "0–29", value: v.filter((x) => x < 30).length, color: "#16a34a" },
+          { label: "30–59", value: v.filter((x) => x >= 30 && x < 60).length, color: "#d97706" },
+          { label: "60–89", value: v.filter((x) => x >= 60 && x < 90).length, color: "#ea580c" },
+          { label: "90+", value: v.filter((x) => x >= 90).length, color: "#dc2626" },
+        ];
+      })()
+    : [
+        { label: "0–29", value: 5, color: "#16a34a" },
+        { label: "30–59", value: 3, color: "#d97706" },
+        { label: "60–89", value: 1, color: "#ea580c" },
+        { label: "90+", value: 0, color: "#dc2626" },
+      ];
+
+  const typeChartItems = live && cohort.data
+    ? Object.entries(EVENT_CATALOG).map(([type, meta]) => ({
+        label: eventTypeLabel(type),
+        value: cohort.data!.event_type_breakdown[type] ?? 0,
+        color: meta.status === "live" ? SEVERITY_META[meta.severity].hex : "#cbd5e1",
+      }))
+    : Object.entries(EVENT_CATALOG).map(([type, meta]) => ({
+        label: eventTypeLabel(type),
+        value: meta.status === "live" ? { gaze_deviation: 5, head_pose_deviation: 3, unauthorized_object: 2, second_person: 1 }[type as "gaze_deviation" | "head_pose_deviation" | "unauthorized_object" | "second_person"] ?? 1 : 0,
+        color: meta.status === "live" ? SEVERITY_META[meta.severity].hex : "#cbd5e1",
+      }));
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -43,18 +94,26 @@ export default function ReportsPage() {
         <p className="text-sm text-slate-500">Integrity reports, cohort analytics, appeals packages, audit trails</p>
       </div>
 
-      <Banner tone="demo">
-        <strong>Demo fixtures.</strong> Charts use labeled fixture data. Report generation and
-        PDF/CSV export require the backend reporting service — export buttons show their real
-        unavailable state and nothing is downloaded.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> Charts use real database records
+          {cohort.data ? ` — ${cohort.data.session_count} sessions in "${examById(selectedExamId)?.title ?? selectedExamId}".` : " (loading cohort data)."} PDF/CSV
+          export generation is not implemented server-side — export buttons stay disabled honestly.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Demo fixtures.</strong> Charts use labeled fixture data. Report generation and
+          PDF/CSV export require the backend reporting service — export buttons show their real
+          unavailable state and nothing is downloaded.
+        </Banner>
+      )}
 
       <Card className="px-5 py-4">
         <div className="grid gap-3 sm:grid-cols-4">
           <Field label="Examination">
             <Select value={examId} onChange={(e) => setExamId(e.target.value)}>
               <option value="all">All examinations</option>
-              {exams.map((e) => (
+              {examList.map((e) => (
                 <option key={e.exam_id} value={e.exam_id}>{e.title}</option>
               ))}
             </Select>
@@ -75,43 +134,25 @@ export default function ReportsPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Flag distribution" subtitle="By severity (demo fixtures)" />
+          <CardHeader title="Flag distribution" subtitle={live ? "By severity (live records)" : "By severity (demo fixtures)"} />
           <div className="px-5 py-4">
-            <BarChart
-              items={(["low", "medium", "high", "critical"] as const).map((s) => ({
-                label: SEVERITY_META[s].label,
-                value: { low: 4, medium: 7, high: 2, critical: 1 }[s],
-                color: SEVERITY_META[s].hex,
-              }))}
-            />
+            <BarChart items={sevChartItems} />
           </div>
         </Card>
         <Card>
-          <CardHeader title="Advisory risk-score distribution" subtitle="Demo fixtures — live scoring requires the stream processor" />
+          <CardHeader title="Advisory risk-score distribution" subtitle={live ? "Live scores (advisory)" : "Demo fixtures — live scoring requires the backend"} />
           <div className="px-5 py-4">
-            <BarChart
-              items={[
-                { label: "0–29", value: 5, color: "#16a34a" },
-                { label: "30–59", value: 3, color: "#d97706" },
-                { label: "60–89", value: 1, color: "#ea580c" },
-                { label: "90+", value: 0, color: "#dc2626" },
-              ]}
-            />
+            <BarChart items={riskBins} />
           </div>
         </Card>
         <Card className="lg:col-span-2">
-          <CardHeader title="Event-type breakdown" subtitle="Per detection source (demo fixtures)" />
+          <CardHeader title="Event-type breakdown" subtitle={live ? "Per detection source (live records)" : "Per detection source (demo fixtures)"} />
           <div className="px-5 py-4">
-            <BarChart
-              items={Object.entries(EVENT_CATALOG).map(([type, meta]) => ({
-                label: eventTypeLabel(type),
-                value: meta.status === "live" ? { gaze_deviation: 5, head_pose_deviation: 3, unauthorized_object: 2, second_person: 1 }[type as "gaze_deviation" | "head_pose_deviation" | "unauthorized_object" | "second_person"] ?? 1 : 0,
-                color: meta.status === "live" ? SEVERITY_META[meta.severity].hex : "#cbd5e1",
-              }))}
-            />
+            <BarChart items={typeChartItems} />
             <p className="mt-2 text-[11px] text-slate-400">
-              Gray bars: detector not yet implemented (audio, browser, network) — shown honestly,
-              not as data.
+              {live
+                ? "Values are real database records; zero means no events of that type."
+                : "Gray bars: detector not yet implemented (audio, browser, network) — shown honestly, not as data."}
             </p>
           </div>
         </Card>

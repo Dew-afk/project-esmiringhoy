@@ -8,6 +8,7 @@ import { Building2, Upload, UserCheck } from "lucide-react";
 import { useRequireRole } from "@/lib/auth";
 import { AdminService } from "@/lib/services";
 import { institutionById, institutions } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
 import type { Role } from "@/lib/types";
 import { Badge, Banner, Button, Card, CardHeader, Input, Pagination, Select, Tabs, useToast } from "@/components/ui";
 
@@ -30,21 +31,37 @@ export default function UserManagement() {
   const [imported, setImported] = useState<{ name: string; email: string }[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const live = apiConnected();
+  const liveUsers = useLiveData(LiveApi.listUsers, live);
+  const liveInstitutions = useLiveData(LiveApi.listInstitutions, live);
+
   const users = useMemo(() => {
-    let u = AdminService.listUsers();
+    let u = live
+      ? (liveUsers.data ?? []).map((apiUser) => ({
+          user_id: apiUser.user_id,
+          role: apiUser.role as Role,
+          full_name: apiUser.full_name,
+          email: apiUser.email,
+          institution_id: apiUser.institution_id,
+          roster_id: apiUser.roster_id ?? undefined,
+          department: apiUser.department ?? undefined,
+          approval_status: (apiUser.approval_status as "approved" | "pending") ?? "approved",
+          consent_status: (apiUser.consent_status as "granted" | "revoked" | "none") ?? "none",
+        }))
+      : AdminService.listUsers();
     if (query) {
       const q = query.toLowerCase();
       u = u.filter((x) => x.full_name.toLowerCase().includes(q) || x.email.toLowerCase().includes(q));
     }
     if (roleFilter !== "all") u = u.filter((x) => x.role === roleFilter);
     return u;
-  }, [query, roleFilter]);
+  }, [query, roleFilter, live, liveUsers.data]);
 
   if (!user) return null;
 
   const pages = Math.max(1, Math.ceil(users.length / PAGE_SIZE));
   const pageRows = users.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const pendingProctors = AdminService.listUsers().filter((u) => u.approval_status === "pending");
+  const pendingProctors = users.filter((u) => u.approval_status === "pending");
 
   const onCsv = (file: File) => {
     file
@@ -71,10 +88,17 @@ export default function UserManagement() {
         <p className="text-sm text-slate-500">Directory, tenants, approvals, and roster import</p>
       </div>
 
-      <Banner tone="demo">
-        <strong>Demo fixtures.</strong> Proctor approvals and CSV imports require the backend —
-        nothing is persisted. A client-side role toggle is never real authorization.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> Users, approvals, and imports are real and
+          server-enforced. A client-side role toggle is never real authorization.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Demo fixtures.</strong> Proctor approvals and CSV imports require the backend —
+          nothing is persisted. A client-side role toggle is never real authorization.
+        </Banner>
+      )}
 
       <Tabs
         value={tab}
@@ -147,7 +171,7 @@ export default function UserManagement() {
 
       {tab === "institutions" && (
         <div className="grid gap-3 md:grid-cols-3">
-          {institutions.map((i) => (
+          {(live ? (liveInstitutions.data ?? []).map((i) => ({ institution_id: i.institution_id, name: i.name, code: i.code, isTest: i.is_test })) : institutions).map((i) => (
             <Card key={i.institution_id} className="px-5 py-4">
               <div className="flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-brand-600" />
@@ -180,9 +204,16 @@ export default function UserManagement() {
                 </div>
                 <Button
                   size="sm"
-                  disabled
-                  title="Proctor approval requires the backend AdminService"
-                  onClick={() => toast.push("warning", "Approval requires the backend — nothing was changed.")}
+                  disabled={!live}
+                  title={live ? "Server-enforced approval + audit log" : "Proctor approval requires the backend AdminService"}
+                  onClick={() =>
+                    LiveApi.approveUser(p.user_id)
+                      .then(() => {
+                        toast.push("success", `${p.full_name} approved — audit-logged.`);
+                        liveUsers.reload();
+                      })
+                      .catch((e) => toast.push("danger", e instanceof Error ? e.message : "Approval failed"))
+                  }
                 >
                   <UserCheck className="h-3.5 w-3.5" /> Approve
                 </Button>
@@ -227,7 +258,23 @@ export default function UserManagement() {
                 </table>
               </div>
               <p className="text-xs text-slate-500">{imported.length} rows parsed (preview).</p>
-              <Button size="sm" disabled title="Import requires the backend AdminService">
+              <Button
+                size="sm"
+                disabled={!live}
+                title={live ? "Server-validated CSV import (no credential materialization)" : "Import requires the backend AdminService"}
+                onClick={() => {
+                  if (!fileRef.current?.files?.[0]) return;
+                  const form = new FormData();
+                  form.append("file", fileRef.current.files[0]);
+                  LiveApi.importRoster(form)
+                    .then((res) => {
+                      toast.push("success", `Imported ${res.created.length} students, skipped ${res.skipped}.`);
+                      setImported(null);
+                      liveUsers.reload();
+                    })
+                    .catch((e) => toast.push("danger", e instanceof Error ? e.message : "Import failed"));
+                }}
+              >
                 Import {imported.length} students
               </Button>
             </>

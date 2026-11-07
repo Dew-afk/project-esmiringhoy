@@ -5,17 +5,11 @@
 // The UI keeps that fact visible (demo banner) and treats every role check as
 // a UI convenience — secure authorization must come from the backend.
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Role, UserAccount } from "./types";
 import { config } from "./config";
+import { LiveApi } from "./live-api";
 
 const STORAGE_KEY = "aism.auth";
 
@@ -57,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     setUser(null);
+    LiveApi.logout(); // clears the backend token when api mode is on
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {

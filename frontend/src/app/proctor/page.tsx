@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowUpDown, Eye, Filter, Search, ShieldCheck, Users } from "lucide-react";
 import { useRequireRole } from "@/lib/auth";
 import { examById, institutionById, sessions, userById } from "@/lib/fixtures";
+import { apiConnected, LiveApi, useLiveData } from "@/lib/live-api";
 import type { ExamSession } from "@/lib/types";
 import { formatTimeOfDay } from "@/lib/format";
 import { SEVERITY_META, SeverityBadge } from "@/components/severity";
@@ -22,7 +23,30 @@ export default function ProctorDashboard() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [page, setPage] = useState(1);
 
+  const live = apiConnected();
+  const liveSessions = useLiveData(LiveApi.proctorSessions, live);
+
   const rows = useMemo(() => {
+    if (live) {
+      return (liveSessions.data ?? []).map((s) => ({
+        s: {
+          session_id: s.session_id,
+          exam_id: s.exam_id,
+          student_id: s.student_id,
+          status: s.status,
+          start_time: s.start_time,
+          end_time: s.end_time,
+          risk_score: s.risk_score,
+          last_event_at: s.last_event_at,
+          recording_available: false,
+          monitoring_state: "active" as const,
+        },
+        student: { full_name: s.student_name, institution_id: s.institution_id } as ReturnType<typeof userById>,
+        exam: { title: s.exam_title } as ReturnType<typeof examById>,
+        flags: s.flag_count,
+        highest: (s.highest_severity as string | null) ?? "low",
+      }));
+    }
     let r = sessions.map((s) => {
       const student = userById(s.student_id);
       const exam = examById(s.exam_id);
@@ -46,14 +70,32 @@ export default function ProctorDashboard() {
       return (av - bv) * sortDir;
     });
     return r;
-  }, [query, severity, status, sortKey, sortDir]);
+  }, [query, severity, status, sortKey, sortDir, live, liveSessions.data]);
 
   if (!user) return null;
 
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const active = sessions.filter((s) => s.status === "active").length;
-  const needReview = 6; // demo fixture count, labeled
+  const sourceSessions = live
+    ? (liveSessions.data ?? []).map((s) => ({
+        status: s.status,
+        flag_count: s.flag_count,
+        highest_severity: s.highest_severity,
+        risk_score: s.risk_score,
+      }))
+    : sessions.map((s) => ({
+        status: s.status,
+        flag_count: 3 + (s.session_id.length % 4),
+        highest_severity: s.session_id.endsWith("1001") ? "critical" : "medium",
+        risk_score: s.risk_score,
+      }));
+  const active = sourceSessions.filter((s) => s.status === "active").length;
+  const needReview = sourceSessions.filter((s) => s.flag_count > 0).length;
+  const severityCounts = (["low", "medium", "high", "critical"] as const).map((sev) => ({
+    label: SEVERITY_META[sev].label,
+    value: sourceSessions.filter((s) => s.highest_severity === sev).length,
+    color: SEVERITY_META[sev].hex,
+  }));
 
   const toggleSort = (k: "risk" | "flags" | "last_event") => {
     if (sortKey === k) setSortDir((d) => (d === 1 ? -1 : 1));
@@ -72,19 +114,33 @@ export default function ProctorDashboard() {
         </p>
       </div>
 
-      <Banner tone="demo">
-        <strong>Demo fixtures.</strong> Session records and risk scores below are labeled
-        development fixtures — the risk-scoring service is not connected, and no live data is
-        shown. The ML service status in the header reflects the real inference server.
-      </Banner>
+      {live ? (
+        <Banner tone="success">
+          <strong>Backend connected.</strong> Sessions, flags, and advisory risk scores below come
+          from the live API — risk scores are advisory indicators only, never findings.
+        </Banner>
+      ) : (
+        <Banner tone="demo">
+          <strong>Demo fixtures.</strong> Session records and risk scores below are labeled
+          development fixtures — the backend is not connected. The ML service status in the header
+          reflects the real inference server.
+        </Banner>
+      )}
+
+      {live && liveSessions.error && (
+        <Banner tone="danger">
+          <strong>Backend unavailable:</strong> {liveSessions.error}. Start the API or set{" "}
+          <code>NEXT_PUBLIC_API_ENABLED=false</code>.
+        </Banner>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Active sessions" value={active} sub="Demo fixture count" icon={<Users className="h-5 w-5" />} />
-        <StatCard label="Requiring review" value={needReview} sub="Pending flagged events" icon={<Eye className="h-5 w-5" />} />
+        <StatCard label="Active sessions" value={active} sub={live ? "Live API" : "Demo fixture count"} icon={<Users className="h-5 w-5" />} />
+        <StatCard label="Requiring review" value={needReview} sub="Sessions with flagged events" icon={<Eye className="h-5 w-5" />} />
         <StatCard
-          label="Highest severity today"
-          value={<span className="flex items-center gap-2 text-base"><SeverityBadge severity="critical" /> 1</span>}
-          sub="Demo fixture"
+          label="Highest severity now"
+          value={<span className="flex items-center gap-2 text-base"><SeverityBadge severity={sourceSessions.some((s) => s.highest_severity === "critical") ? "critical" : sourceSessions.some((s) => s.highest_severity === "high") ? "high" : sourceSessions.some((s) => s.highest_severity === "medium") ? "medium" : "low"} /> {sourceSessions.filter((s) => s.highest_severity !== null).length}</span>}
+          sub={live ? "Live API" : "Demo fixture"}
           icon={<AlertTriangle className="h-5 w-5" />}
         />
         <StatCard label="ML service" value="Probe" sub="See header status — connects to webcam_demo.py" icon={<ShieldCheck className="h-5 w-5" />} />
@@ -92,24 +148,28 @@ export default function ProctorDashboard() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Flags by severity (today)" subtitle="Demo fixtures — labeled" />
+          <CardHeader
+            title={live ? "Sessions by highest severity" : "Flags by severity (today)"}
+            subtitle={live ? "Live API — real session data" : "Demo fixtures — labeled"}
+          />
           <div className="px-5 py-4">
-            <BarChart
-              items={(["low", "medium", "high", "critical"] as const).map((s) => ({
-                label: SEVERITY_META[s].label,
-                value: { low: 4, medium: 7, high: 2, critical: 1 }[s],
-                color: SEVERITY_META[s].hex,
-              }))}
-            />
+            <BarChart items={severityCounts} />
           </div>
         </Card>
         <Card>
-          <CardHeader title="Session activity" subtitle="Flagged events per 10-min bucket (demo)" />
+          <CardHeader title="Session activity" subtitle={live ? "Time-series endpoint not implemented" : "Flagged events per 10-min bucket (demo)"} />
           <div className="px-5 py-4">
-            <Sparkline points={[0, 2, 1, 4, 2, 5, 3, 6, 4, 3, 5, 2]} />
-            <p className="mt-2 text-[11px] text-slate-400">
-              Based on demo fixtures. Live activity arrives with the stream processor backend.
-            </p>
+            {live ? (
+              <p className="py-6 text-center text-xs text-slate-400">
+                Activity history requires the stream processor&apos;s time-series endpoint —
+                shown honestly, not invented.
+              </p>
+            ) : (
+              <>
+                <Sparkline points={[0, 2, 1, 4, 2, 5, 3, 6, 4, 3, 5, 2]} />
+                <p className="mt-2 text-[11px] text-slate-400">Based on demo fixtures.</p>
+              </>
+            )}
           </div>
         </Card>
       </div>
@@ -117,7 +177,7 @@ export default function ProctorDashboard() {
       <Card>
         <CardHeader
           title="Session monitoring"
-          subtitle={`${rows.length} sessions (demo fixtures)`}
+          subtitle={live ? `${rows.length} sessions (live API)` : `${rows.length} sessions (demo fixtures)`}
           action={
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
