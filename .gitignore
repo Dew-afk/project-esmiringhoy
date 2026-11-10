@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 machine learning/pose/.venv/
 
+# Frontend build output
+client/dist/
+client/node_modules/
+
 # Training data (raw videos + CVAT image datasets): several GB — stays local
 machine learning/dataset/
 

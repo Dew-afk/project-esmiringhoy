@@ -1,0 +1,141 @@
+/* Sign-in screen layout only. The palette, orbs, dot grid and motion live in
+   tokens.css and design.css; everything here is scoped under .signin. */
+
+.signin {
+  position: fixed; inset: 0; overflow-y: auto;
+  background: var(--c-secondary); color: var(--c-detail);
+  font-family: var(--font-ui);
+}
+
+.signin-head {
+  position: fixed; top: 0; left: 0; z-index: 2; padding: 24px 32px;
+}
+.signin-wordmark { font: 400 18px/1 var(--font-pixel); color: var(--c-detail); }
+
+.signin-main {
+  position: relative; z-index: 1; min-height: 100dvh;
+  display: grid; place-items: center; padding: 80px 16px 48px;
+}
+
+/* glass card */
+.signin .glass-card {
+  width: 440px; max-width: 92vw;
+  background: var(--t-secondary-55);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--t-detail-25); border-radius: 24px; padding: 32px;
+  box-shadow: inset 0 1px 0 var(--t-detail-25), var(--shadow-card);
+  display: flex; flex-direction: column; gap: 24px;
+}
+.signin .glass-card h1 { margin: 0; font-size: 32px; font-weight: 700; line-height: 1.2; color: var(--c-detail); }
+.signin .tagline { margin: 8px 0 0; font-size: 16px; font-weight: 400; line-height: 1.5; color: var(--t-detail-80); }
+
+/* role selector */
+.signin .field-label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--c-detail); }
+.signin .role-group { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.signin .role-pill {
+  position: absolute; top: 0; left: 0; z-index: 0;
+  width: calc(50% - 4px); height: calc(50% - 4px);
+  border-radius: 10px; background: var(--c-primary-soft);
+  box-shadow: 0 0 24px var(--t-primary-40);
+  transition: transform 200ms ease-out;
+}
+.signin .role-opt {
+  position: relative; z-index: 1; display: flex; align-items: center; justify-content: center;
+  gap: 8px; min-height: 44px; padding: 0 8px; cursor: pointer;
+  font-size: 16px; font-weight: 400; line-height: 1.2; text-align: center;
+  color: var(--c-detail); border: 1px solid var(--t-detail-35); border-radius: 10px;
+  background: transparent;
+}
+.signin .role-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.signin .role-opt:focus-within { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+.signin .role-opt.selected { color: var(--c-secondary); border-color: transparent; font-weight: 600; }
+.signin .role-check { width: 16px; height: 16px; display: grid; place-items: center; flex: none; }
+
+/* fields */
+.signin .input {
+  width: 100%; height: 48px; padding: 0 16px;
+  font: 400 16px/1 var(--font-ui); color: var(--c-detail);
+  background: var(--t-secondary-85);
+  border: 1px solid var(--t-detail-35); border-radius: 12px;
+}
+.signin .input::placeholder { color: var(--t-detail-80); opacity: 1; }
+.signin .input:focus-visible {
+  outline: 2px solid var(--c-primary); outline-offset: 0;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 4px var(--t-primary-25), 0 0 16px var(--t-primary-18);
+}
+.signin .hint { display: block; margin-top: 8px; font-size: 13px; line-height: 1.4; color: var(--t-detail-80); }
+
+.signin .pwd { position: relative; }
+.signin .pwd .input { padding-right: 64px; }
+.signin .pwd-toggle {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  height: 44px; min-width: 44px; padding: 0 8px; cursor: pointer;
+  font: 400 13px/1 var(--font-ui); color: var(--c-detail);
+  background: transparent; border: 0; border-radius: 8px;
+}
+.signin .pwd-toggle:hover { background: var(--t-detail-25); }
+.signin .pwd-toggle:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+/* reserved message slot */
+.signin .form-message { height: 20px; display: flex; align-items: center; }
+.signin .form-message .msg {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; line-height: 1.4; color: var(--c-detail);
+}
+.signin .form-message svg { flex: none; }
+
+/* buttons and links */
+.signin .btn { width: 100%; height: 48px; border-radius: 12px; cursor: pointer;
+       font: 600 16px/1 var(--font-ui); }
+.signin .btn-primary {
+  background: var(--c-primary-soft); color: var(--c-secondary); border: 0;
+  box-shadow: 0 8px 24px var(--t-primary-25);
+}
+.signin .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 32px var(--t-primary-40); }
+.signin .btn-primary:active { transform: translateY(0); box-shadow: 0 8px 24px var(--t-primary-25); }
+.signin .btn-primary:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+.signin .btn-secondary { background: transparent; color: var(--c-detail); border: 1px solid var(--t-detail-35); }
+.signin .btn-secondary:hover { border-color: var(--t-detail-80); }
+.signin .btn-secondary:active { transform: translateY(1px); }
+.signin .btn-secondary:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+.signin .linkrow { display: flex; justify-content: space-between; align-items: center; }
+.signin .link { background: none; border: 0; padding: 0; min-height: 44px; cursor: pointer;
+        font: 400 14px/1 var(--font-ui); color: var(--c-primary-soft); }
+.signin .link:hover { color: var(--c-detail); }
+.signin .link:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; border-radius: 4px; }
+
+.signin .divider { display: flex; align-items: center; gap: 12px;
+           font-size: 13px; color: var(--t-detail-80); }
+.signin .divider::before, .signin .divider::after { content: ""; flex: 1; height: 1px; background: var(--t-detail-35); }
+
+.signin .demo-note { margin: 0; font-size: 13px; line-height: 1.4; color: var(--c-detail); }
+.signin .demo-note b { font-weight: 600; }
+
+.signin .tenant-enter { animation: tenant-in 200ms ease-out; }
+@keyframes tenant-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.signin .select {
+  width: 100%; height: 48px; padding: 0 16px;
+  font: 400 16px/1 var(--font-ui); color: var(--c-detail);
+  background: var(--t-secondary-85);
+  border: 1px solid var(--t-detail-35); border-radius: 12px;
+}
+.signin .select:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 0; }
+
+@media (max-width: 768px) {
+  .signin-head { padding: 16px 16px 0; }
+  .signin .glass-card { padding: 24px; }
+}
+
+/* motion only when wanted */
+@media (prefers-reduced-motion: no-preference) {
+  .signin .glass-card { animation: card-in 400ms ease-out; }
+  @keyframes card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  .signin .btn-primary { transition: transform 150ms ease-out, box-shadow 150ms ease-out; }
+  .signin .btn-secondary { transition: border-color 150ms ease-out, transform 150ms ease-out; }
+  .signin .input { transition: border-color 150ms ease-out, box-shadow 150ms ease-out; }
+  .signin .form-message .msg { animation: msg-in 200ms ease-out; }
+  @keyframes msg-in { from { opacity: 0; } to { opacity: 1; } }
+}

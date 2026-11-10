@@ -1,0 +1,47 @@
+/* Hallmark · v2.0.0 · redesign · idea: calm minimal glassmorphism across the whole app, three colours only, one family · genre: atmospheric · shape: app screens · signature: the frosted glass card over drifting violet orbs · posture: committed · sweep: sloplint static */
+/* Hallmark · critique: v2 sign-in system applied app-wide - flutes, mono and the pixel genre retired, severity encoded by labels and opacity, never colour alone */
+/* Hallmark · waive 29 · the orbs are the page's light source, two or three fixed blooms, never animated past a slow transform drift · the violet glow is the atmosphere */
+/* Hallmark · waive 23 · posture committed is declared in the stamp, violet stays on the button, the selected role and links · committed accent posture */
+/* Hallmark · answered F24 · the glass rim and its shadow are one surface: a defined edge plus depth, chosen deliberately */
+/* Hallmark · answered F25 · wide tables scroll horizontally on phones; rows restack when real data lands */
+
+/* Three colours. Every other shade is one of these with opacity changed. */
+:root {
+  --c-primary: #8B7BFF;     /* violet: focus rings, glows, orbs, gaze ray, boxes */
+  --c-secondary: #0B0A18;   /* deep indigo-black: page, glass tint, text on fills */
+  --c-detail: #F4F3FF;      /* near-white lavender: all text, icons, borders */
+  /* PRIMARY stepped 30% toward DETAIL: the pure hue cannot reach 7:1 against
+     dark text (black tops out at 6.37 on it), so fills and links use this */
+  --c-primary-soft: #AB9FFF;
+
+  --t-detail-100: rgba(244, 243, 255, 1);
+  --t-detail-80: rgba(244, 243, 255, 0.80);   /* secondary text, never lower */
+  --t-detail-60: rgba(244, 243, 255, 0.60);   /* faint labels only */
+  --t-detail-50: rgba(244, 243, 255, 0.50);   /* severity ladder steps */
+  --t-detail-35: rgba(244, 243, 255, 0.35);   /* borders */
+  --t-detail-25: rgba(244, 243, 255, 0.25);   /* card borders */
+  --t-detail-20: rgba(244, 243, 255, 0.20);
+  --t-detail-15: rgba(244, 243, 255, 0.15);
+  --t-detail-10: rgba(244, 243, 255, 0.10);   /* hairlines */
+  --t-detail-06: rgba(244, 243, 255, 0.06);
+  --t-detail-04: rgba(244, 243, 255, 0.04);   /* dot grid */
+  --t-secondary-85: rgba(11, 10, 24, 0.85);   /* solid inputs, chips */
+  --t-secondary-55: rgba(11, 10, 24, 0.55);   /* glass panels */
+  --t-primary-25: rgba(139, 123, 255, 0.25);
+  --t-primary-18: rgba(139, 123, 255, 0.18);
+  --t-primary-12: rgba(139, 123, 255, 0.12);
+  --t-primary-40: rgba(139, 123, 255, 0.40);  /* glows */
+  --shadow-card: 0 24px 64px rgba(11, 10, 24, 0.6);
+
+  --font-ui: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --font-pixel: 'Silkscreen', 'Courier New', monospace; /* wordmark only */
+
+  /* fixed type scale, app range */
+  --text-label: 13px;
+  --text-data: 14px;
+  --text-body: 16px;
+  --text-title: 18px;
+  --text-head: 24px;
+
+  color-scheme: dark;
+}
