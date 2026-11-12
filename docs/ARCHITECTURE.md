@@ -39,17 +39,16 @@ MANAGEMENT          Exam Lifecycle · Accounts · Reporting · Retention Job
 | 5 | Storage Layer | Not started (events persist as JSONL files only) |
 | 6 | LLM Summarization | Not started |
 | 7 | Proctor Dashboard | **Partial** — full frontend skeleton, placeholders until the backend exists |
-| 8 | User & Account Mgmt | Not started (sign-in screen is a stub) |
-| 9 | Exam Management | Not started (admin UI is a skeleton) |
-| 10 | Reporting & Compliance | Not started (reports UI is a skeleton) |
+| 8 | User & Account Mgmt | **Mostly done** — `backend/` auth API + admin provisioning/approval API; frontend sign-in and admin accounts UI wired |
+| 9 | Exam Management | **Partial** — schema + exams list + session start (consent/roster/lifecycle gated); no exam CRUD or lifecycle transitions |
+| 10 | Reporting & Compliance | Not started (reports UI is a skeleton); audit_log now receives writes |
 
 ## 2. Repository layout
 
 ```
 sd3/
-├── ARCHITECTURE.md               # This file (the only doc)
-├── dev.bat                       # Starts backend + client + browser, one command
-├── client/                       # React frontend (Vite)
+├── dev.bat                       # Starts ML backend + API backend + frontend + browser
+├── frontend/                     # React frontend (Vite)
 │   ├── src/
 │   │   ├── tokens.css            # The design system: 3 colours + derived shades + type scale
 │   │   ├── design.css            # App-wide styles: glass, buttons, tables, chips, live session
@@ -61,13 +60,28 @@ sd3/
 │   │                             #   Reports, DbViewer
 │   ├── index.html                # Fonts (Space Grotesk + Silkscreen)
 │   └── vite.config.js            # Proxies /ws to :8000
-└── machine learning/             # ML workstream (subsystem 2)
+├── backend/                      # FastAPI backend (auth, accounts, exams — new)
+│   ├── main.py                   # App entry: uvicorn main:app --port 8001
+│   ├── db.py                     # DATABASE_URL from db/.env
+│   ├── security.py               # Auth/security helpers
+│   ├── tests/                    # pytest suite
+│   └── requirements.txt
+├── db/                           # Database layer
+│   ├── schema.sql                # THE single schema file (all tables, all columns)
+│   ├── seed_dev.py               # Dev seed: 2 institutions, 4 roles, demo exam
+│   └── .env / .env.example       # DATABASE_URL (gitignored)
+├── docs/                         # Documentation
+│   ├── ARCHITECTURE.md           # This file
+│   ├── ROLES.md                  # Role definitions + frontend mapping
+│   └── USER_STORIES.md           # Story-by-story status with test evidence
+└── ml/                           # ML workstream (subsystem 2)
     ├── webcam_demo.py            # Live demo backend: FastAPI + WS on :8000, YOLO + pose
-    ├── webcam.html               # Legacy single-file demo client (superseded by client/)
+    ├── webcam.html               # Legacy single-file demo client (superseded by frontend/)
     ├── train.py                  # Training entry: --preset stage1|stage2, --eval-test
     ├── prep_dataset.py           # CVAT XML → YOLO splits; negatives, --exclude, leak checks
     ├── extract_frames.py         # Raw videos → staged frames for negative review
     ├── eval_fp.py                # Multi-model false-positive review over video frames
+    ├── measure_fa_rate.py        # False-alarm rate measurement
     ├── policy.yaml               # Severity catalog + pose thresholds + yolo conf floors
     ├── pose/                     # Head-pose & gaze pipeline (own venv, mediapipe)
     │   ├── extract.py detect.py evaluate.py wrap.py annotate.py
@@ -143,7 +157,7 @@ sd3/
 
 **Stack:** Vite + React 18, hash routing (no router dependency), Space Grotesk + Silkscreen from Google Fonts.
 
-**Design system** (`src/tokens.css`, locked in `client/design.md` history): exactly three colours —
+**Design system** (`src/tokens.css`, locked in `frontend/design.md` history): exactly three colours —
 - `--c-primary: #8B7BFF` (focus rings, glows, orbs, gaze ray, detection boxes)
 - `--c-secondary: #0B0A18` (page, glass tint, text on fills)
 - `--c-detail: #F4F3FF` (all text, icons, borders) — plus `--c-primary-soft: #AB9FFF`, the primary stepped 30% toward detail, because the pure hue cannot reach 7:1 with any dark text
@@ -164,21 +178,23 @@ Every data region has four states (loading/empty/error/full). Backend-dependent 
 ## 6. Running it
 
 ```powershell
-dev.bat                          # from sd3/: backend (:8000) + client (:5173) + browser
+dev.bat                          # from sd3/: ML backend (:8000) + API backend (:8001) + frontend (:5173) + browser
 ```
 
 Or manually:
 ```powershell
-cd "machine learning" && python webcam_demo.py     # needs torch, ultralytics, mediapipe, fastapi
-cd "client" && npm install && npm run dev          # → http://localhost:5173
+cd "ml" && python webcam_demo.py                  # needs torch, ultralytics, mediapipe, fastapi
+cd "backend" && uvicorn main:app --port 8001       # needs DATABASE_URL from db/.env
+cd "frontend" && npm install && npm run dev        # → http://localhost:5173
 ```
 
-Offline pose pipeline: `machine learning/pose/.venv` → `python extract.py | detect.py | evaluate.py | wrap.py`. Training runs from `machine learning/` (`data/dataset.yaml` resolves from the cwd). Windows: keep `__main__` guards in scripts that train or use dataloaders; `workers=0` by default (RAM pressure).
+Offline pose pipeline: `ml/pose/.venv` → `python extract.py | detect.py | evaluate.py | wrap.py`. Training runs from `ml/` (`data/dataset.yaml` resolves from the cwd). Windows: keep `__main__` guards in scripts that train or use dataloaders; `workers=0` by default (RAM pressure).
 
 ## 7. Honest gaps
 
-- Not started: audio, browser events, ingestion API + queue, stream processor, database, LLM summarizer, accounts/auth (sign-in is a stub), exam management backend, reporting, retention job.
-- Live events persist as JSONL, not a DB; the frontend's backend-dependent screens are skeletons with labeled placeholders.
+- Not started: audio, browser events, ingestion API + queue, stream processor, LLM summarizer, exam CRUD/lifecycle transitions, reporting, retention job, recording capture/export, DB viewer backend.
+- Built since: exam session start (consent/roster/lifecycle/institution gated), WS bound to real sessions, events → `events_flags` + advisory `risk_scores`, proctor read + review endpoints, appeals read lane, admin account management, consent UI, audit_log writes.
+- DB schema is a single file (`db/schema.sql` — migrations merged in, no migration folder) and events now persist to `events_flags`; `webcam_demo.py` falls back to JSONL when the backend is unreachable (`"db": "down"` is reported, never faked).
 - Pose test numbers are small-n (one test person, ~16 min); the live camera state is verified by contract and lint, not by screenshot.
 - Duplicate bursts were excluded from training (769 images); remaining near-duplicates (dhash 1–4) still straddle splits.
-- `webcam.html` is the legacy single-file demo, superseded by `client/`; `machine learning/README.md`-era model references are historical.
+- `webcam.html` is the legacy single-file demo, superseded by `frontend/`; `ml/README.md`-era model references are historical.

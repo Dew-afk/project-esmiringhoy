@@ -34,3 +34,15 @@ yolo:
   # debounce thresholds in `pose`). 0.35 = the historical CONF default.
   conf_phone: 0.35
   conf_person: 0.35
+
+# Advisory risk indicator for risk_scores — NOT a cheating likelihood (SRS 3.6).
+# score = min(1, sum(weight[severity] * duration_s) / window_s), computed by
+# backend/sessions.py recompute_risk. Tuning these weights changes the
+# displayed advisory number only; it never affects detection.
+risk:
+  weights:
+    low: 0.05
+    medium: 0.15
+    high: 0.4
+    critical: 0.7
+  window_s: 300

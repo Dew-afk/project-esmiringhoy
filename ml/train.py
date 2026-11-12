@@ -1,4 +1,4 @@
-"""Train the proctoring YOLO (phone + person). Run from machine learning/.
+"""Train the proctoring YOLO (phone + person). Run from ml/.
 
 Stage presets:
     stage1  fresh train        python train.py --preset stage1

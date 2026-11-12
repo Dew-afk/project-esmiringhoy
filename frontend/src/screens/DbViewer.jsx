@@ -3,19 +3,21 @@ import { Panel, Banner, Empty } from '../ui.jsx'
 
 export default function DbViewer() {
   const [confirm, setConfirm] = useState(false)
+  const [institution, setInstitution] = useState('Test Institution')
 
   return (
     <>
       <Banner>
-        <b>database viewer placeholder:</b> read-only and scoped to the institution; deletion is guarded to the test
-        institution with a confirmation step, and every attempt is logged
+        <b>database viewer placeholder:</b> read-only and scoped to the institution; deletion is guarded to the
+        Test Institution with a confirmation step, and every attempt is logged
       </Banner>
       <Panel title="institution scope">
         <div className="formrow">
-          <select className="select" aria-label="institution scope" defaultValue="test institution">
-            <option value="test institution">test institution</option>
+          <select className="select" aria-label="institution scope" value={institution}
+            onChange={(e) => setInstitution(e.target.value)}>
+            <option value="Test Institution">Test Institution</option>
           </select>
-          <span style={{ color: 'var(--dim)', fontSize: 'var(--text-data)' }}>
+          <span style={{ color: 'var(--t-detail-80)', fontSize: 'var(--text-data)' }}>
             cross-institution access is denied and logged by the backend
           </span>
         </div>
@@ -39,10 +41,18 @@ export default function DbViewer() {
       </Panel>
       <Panel title="guarded delete">
         {!confirm ? (
-          <button className="btn danger" onClick={() => setConfirm(true)}>delete mock and test data</button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <button className="btn danger" disabled={institution !== 'Test Institution'}
+              onClick={() => setConfirm(true)}>delete mock and test data</button>
+            {institution !== 'Test Institution' && (
+              <span style={{ color: 'var(--t-detail-80)', fontSize: 'var(--text-data)' }}>
+                deletion is available in the Test Institution only
+              </span>
+            )}
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Banner>this deletes only the test institution's data. the attempt and the outcome are written to the audit log before anything is removed (placeholder, nothing is deleted yet)</Banner>
+            <Banner>this deletes only the Test Institution's data. the attempt and the outcome are written to the audit log before anything is removed (placeholder, nothing is deleted yet)</Banner>
             <div className="formrow">
               <button className="btn danger" onClick={() => setConfirm(false)}>confirm delete (placeholder)</button>
               <button className="btn ghost" onClick={() => setConfirm(false)}>cancel</button>

@@ -67,7 +67,7 @@ function drawGaze(octx, g) {
   octx.fill()
 }
 
-export default function LiveSession() {
+export default function LiveSession({ sessionToken = null }) {
   const viewRef = useRef(null)
   const overlayRef = useRef(null)
   const wsRef = useRef(null)
@@ -86,7 +86,8 @@ export default function LiveSession() {
     let video = null
 
     function connect() {
-      const ws = new WebSocket(`ws://${location.host}/ws`)
+      const qs = sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : ''
+      const ws = new WebSocket(`ws://${location.host}/ws${qs}`)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
       ws.onmessage = (e) => {
@@ -164,7 +165,7 @@ export default function LiveSession() {
       wsRef.current?.close()
       stream?.getTracks().forEach((tr) => tr.stop())
     }
-  }, [])
+  }, [sessionToken])
 
   const segFilled = calib.state === 'live'
     ? SEGMENTS
